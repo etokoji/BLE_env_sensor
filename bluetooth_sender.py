@@ -1,3 +1,5 @@
+#
+# このファイル(bluetooth_sender.py)は現在未使用 → BLEサービス方式の送信クラス（旧版）
 """
 Reusable BLE Sender class for MicroPython on ESP32.
 
