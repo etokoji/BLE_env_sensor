@@ -135,8 +135,8 @@ def create_struct_message(dev_id, temp, hum, pres, vdd, reading_id, lux_lx=None)
 
 
 # アドバタイジングに載せる軽量バイナリ（Manufacturer Specific Data）
-# フォーマット: b'ENV' + dev_id(u1) + r_id(u2) + temp(dC i2) + hum(d% u2) + pres(hPa u2) + vdd(cV u2) + lux(dlx u2)
-# 単位: 温度0.1°C, 湿度0.1%, 気圧0.1hPa, 電圧0.01V, 照度0.1 lx（符号なし）
+# フォーマット: b'ENV' + dev_id(u1) + r_id(u2) + temp(dC i2) + hum(d% u2) + pres(hPa u2) + vdd(cV u2) + lux(lx u2)
+# 単位: 温度0.1°C, 湿度0.1%, 気圧0.1hPa, 電圧0.01V, 照度 1 lx（符号なし）
 # 合計: 3 + 1 + 2 + 2 + 2 + 2 + 2 + 2 = 16 bytes
 # 受信側: 14バイトのみのパケットは旧フォーマット（照度なし）
 
@@ -149,7 +149,7 @@ def build_adv_measure_payload(dev_id, reading_id, temp_c, hum_pct, pres_pa, vdd_
     p_hPa_x10 = int(round((pres_pa / 100.0) * 10))  # Pa → hPa → 0.1hPa単位
     v_cV = int(round(vdd_v * 100))  # unsigned int16
     lux_lx = max(0.0, float(lux_lx))
-    lux_dlx = int(round(lux_lx * 10)) & 0xFFFF
+    lux_u16 = int(round(lux_lx)) & 0xFFFF
     return hdr + struct.pack(
         ">BHhHHHH",
         dev_id & 0xFF,
@@ -158,7 +158,7 @@ def build_adv_measure_payload(dev_id, reading_id, temp_c, hum_pct, pres_pa, vdd_
         h_dP & 0xFFFF,
         p_hPa_x10 & 0xFFFF,
         v_cV & 0xFFFF,
-        lux_dlx,
+        lux_u16,
     )
 
 
