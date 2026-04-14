@@ -1,7 +1,7 @@
 import machine
 import ujson
 from machine import Pin
-from time import sleep
+from time import sleep, sleep_ms
 
 import read_sensors
 from env_bluetooth_sender import EnvBluetoothSender
@@ -10,7 +10,22 @@ from env_bluetooth_sender import EnvBluetoothSender
 SleepTimeInMs = 1000*20 - 605  # 60 - 0.605 sec
 #SleepTimeInMs = 1000*15 - 605  # 15 - 0.605 sec
 
-DEV_ID = 80
+DEV_ID = 10
+
+# ESP32-C3のMODEボタン（通常GPIO9）
+MODE_PIN = 9
+LED_PIN = 8
+
+# I2C
+# SCL = 10
+# SDA = 7
+
+def is_mode_button_pressed():
+    """MODEボタンの状態をチェック"""
+    mode_pin = Pin(MODE_PIN, Pin.IN, Pin.PULL_UP)
+    sleep_ms(50)  # 安定化待機
+    return mode_pin.value() == 0  # LOW = 押下
+
 
 # ESP32-C3 IO2は、電源投入時にHになるので使えない。
 DONE_PIN = 4
@@ -58,6 +73,10 @@ def main():
         save_rtc_data(stored_data)
         
     r_id = stored_data["r_id"]
+    
+    
+    if is_mode_button_pressed():
+        return
     
     print(f'boot reason: {machine.reset_cause()}')
     if machine.reset_cause() == machine.HARD_RESET:

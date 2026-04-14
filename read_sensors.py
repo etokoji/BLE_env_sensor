@@ -5,15 +5,16 @@ import struct
 
 import BME280
 import AHT10
+from bh1750 import BH1750, ADDR_GND, ONE_H_RES
 
 
-SCL = 9
-SDA = 8
+SCL = 5
+SDA = 6
 
 ADC_PIN = 0
 ADC_EN = 1
 
-ADC_COF = 0.001090467
+ADC_COF = 0.001127406   #  = 3.69 / 3273
 
 
 def setup_i2c():
@@ -106,8 +107,20 @@ def read_aht10(i2c):
     return temp, hum
 
 
+def read_bh1750(i2c, addr=ADDR_GND):
+    """ワンショット測定のあと power_down してスタンバイ電流を抑える。"""
+    sensor = BH1750(i2c, addr=addr)
+    try:
+        return sensor.measure_lux(mode=ONE_H_RES)
+    finally:
+        try:
+            sensor.power_down()
+        except Exception:
+            pass
+
+
 # JSON文字列データ（従来方式）
-def create_struct_message(dev_id, temp, hum, pres, vdd, reading_id):
+def create_struct_message(dev_id, temp, hum, pres, vdd, reading_id, lux_lx=None):
     message = {
         "device_id": dev_id,
         "temperature": temp,
@@ -116,24 +129,36 @@ def create_struct_message(dev_id, temp, hum, pres, vdd, reading_id):
         "vdd": vdd,
         "reading_id": reading_id,
     }
+    if lux_lx is not None:
+        message["illuminance_lx"] = lux_lx
     return ujson.dumps(message)
 
 
 # アドバタイジングに載せる軽量バイナリ（Manufacturer Specific Data）
-# フォーマット: b'ENV' + dev_id(u1) + r_id(u2) + temp(dC i2) + hum(d% u2) + pres(hPa u2) + vdd(cV u2)
-# 単位: 温度0.1°C, 湿度0.1%, 気圧0.1hPa, 電圧0.01V
-# 合計: 3 + 1 + 2 + 2 + 2 + 2 + 2 = 14 bytes
+# フォーマット: b'ENV' + dev_id(u1) + r_id(u2) + temp(dC i2) + hum(d% u2) + pres(hPa u2) + vdd(cV u2) + lux(dlx u2)
+# 単位: 温度0.1°C, 湿度0.1%, 気圧0.1hPa, 電圧0.01V, 照度0.1 lx（符号なし）
+# 合計: 3 + 1 + 2 + 2 + 2 + 2 + 2 + 2 = 16 bytes
+# 受信側: 14バイトのみのパケットは旧フォーマット（照度なし）
 
 
-def build_adv_measure_payload(dev_id, reading_id, temp_c, hum_pct, pres_pa, vdd_v):
+def build_adv_measure_payload(dev_id, reading_id, temp_c, hum_pct, pres_pa, vdd_v, lux_lx):
     hdr = b"ENV"
     t_dC = int(round(temp_c * 10))  # signed int16
     h_dP = int(round(hum_pct * 10))  # unsigned int16
     # 気圧をhPa単位に変換してから10倍（0.1hPa精度）
     p_hPa_x10 = int(round((pres_pa / 100.0) * 10))  # Pa → hPa → 0.1hPa単位
     v_cV = int(round(vdd_v * 100))  # unsigned int16
+    lux_lx = max(0.0, float(lux_lx))
+    lux_dlx = int(round(lux_lx * 10)) & 0xFFFF
     return hdr + struct.pack(
-        ">BHhHHH", dev_id & 0xFF, reading_id & 0xFFFF, t_dC, h_dP & 0xFFFF, p_hPa_x10 & 0xFFFF, v_cV & 0xFFFF
+        ">BHhHHHH",
+        dev_id & 0xFF,
+        reading_id & 0xFFFF,
+        t_dC,
+        h_dP & 0xFFFF,
+        p_hPa_x10 & 0xFFFF,
+        v_cV & 0xFFFF,
+        lux_dlx,
     )
 
 
@@ -155,13 +180,20 @@ def measure_and_send(dev_id, r_id, bt_sender):
     # AHT10から温度・湿度データを取得（こちらを優先使用）
     temp, hum = read_aht10(i2c)
 
+    lux = 0.0
+    try:
+        lux = read_bh1750(i2c)
+        print(f"BH1750: lux={lux:.1f} lx")
+    except Exception as e:
+        print(f"BH1750 error: {e}")
+
     print("DEV_ID", dev_id)
     print("r_id", r_id)
     print(f"temp: {temp}, humidity:{hum}")
-    print(f"湿度: {hum:.1f}%, 温度: {temp:.1f}°C,  気圧: {pres:.3f}")
+    print(f"湿度: {hum:.1f}%, 温度: {temp:.1f}°C,  気圧: {pres:.3f}, 照度: {lux:.1f} lx")
 
     # 広告用の軽量バイナリに変換して一定時間アドバタイズ
-    adv_payload = build_adv_measure_payload(dev_id, r_id, temp, hum, pres, vdd)
+    adv_payload = build_adv_measure_payload(dev_id, r_id, temp, hum, pres, vdd, lux)
     ret = False
     try:
         # 省電力のため短時間でアドバタイジング
